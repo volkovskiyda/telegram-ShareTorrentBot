@@ -1,0 +1,16 @@
+.idea
+.venv
+
+.env
+
+downloads/
+home/
+sample/
+temp/
+torrents/
+upload/
+
+test*
+
+.DS_Store
+TODO
