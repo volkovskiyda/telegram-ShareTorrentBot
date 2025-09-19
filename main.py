@@ -303,7 +303,7 @@ async def sample(update, context) -> int:
     pipeline = ffmpeg_pipeline(first_file, output_path, selected_audio_index, True)
 
     try:
-        await asyncio.to_thread(pipeline.run, capture_stdout=True, capture_stderr=True)
+        await asyncio.to_thread(pipeline.run)
     except ffmpeg.Error as e:
         err_msg = e.stderr.decode("utf-8", errors="ignore") if hasattr(e, "stderr") and e.stderr else str(e)
         await query.edit_message_text(
@@ -344,8 +344,10 @@ async def sample(update, context) -> int:
 async def upload(update, context) -> int:
     query = update.callback_query
     await query.answer()
+
     try: await query.edit_message_reply_markup(reply_markup=None)
     except: pass
+
     decision = (query.data or "").split(":")[-1]
 
     if decision == "no":
@@ -372,7 +374,7 @@ async def upload(update, context) -> int:
 
     for f in video_files(directory):
         pipeline = ffmpeg_pipeline(os.path.join(directory, f), os.path.join(upload_dir, f"{f}.mp4"), selected_audio_index, False)
-        await asyncio.to_thread(pipeline.run, capture_stdout=True, capture_stderr=True)
+        await asyncio.to_thread(pipeline.run)
 
     files = sorted([file for file in os.listdir(upload_dir) if file.endswith('.mp4')])
     len_files = len(files)
