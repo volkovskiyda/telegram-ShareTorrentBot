@@ -409,6 +409,9 @@ async def upload(update, context) -> int:
     shutil.rmtree(upload_dir, ignore_errors=True)
     print(f"Uploaded {name}, upload folder removed: {upload_dir}")
 
+    if upload_chat_id:
+        await context.bot.send_message(chat_id=query.message.chat_id, text=f"Video uploaded to {upload_chat_id}")
+
     keyboard = InlineKeyboardMarkup(
         [
             [
