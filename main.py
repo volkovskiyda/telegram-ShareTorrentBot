@@ -10,18 +10,16 @@ from torrentp import TorrentDownloader
 dotenv.load_dotenv()
 filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBUserWarning)
 
-FLOW = range(1)
-
-torrent = "torrent"
-downloads = "downloads"
-
 token = os.getenv("BOT_TOKEN")
 base_url = os.getenv("BASE_URL") or "http://localhost:8081"
 timeout = os.getenv("READ_TIMEOUT") or 30
 upload_chat_id = os.getenv("UPLOAD_CHAT_ID")
 available_user_ids = os.getenv("AVAILABLE_USER_IDS")
 
+torrent = "torrent"
 video_exts = (".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v")
+
+FLOW = range(1)
 
 downloader: TorrentDownloader = None
 download_cancelled = False
@@ -79,14 +77,14 @@ async def select_torrent(update, context) -> int:
         file_path = await file.download_to_drive(torrent_path)
         print(f"download_to_drive: {file_path}")
     except InvalidToken:
-        file_path = "./home/" + file.file_path.split("//home/")[-1]
+        file_path = "/home/" + file.file_path.split("//home/")[-1]
         torrent_path = file_path
     except Exception as e:
         await message.reply_text(f"Failed to download torrent file: {e}")
         return ConversationHandler.END
 
     file_name = document.file_name
-    downloads_dir = f"{downloads}/{file_name}"
+    downloads_dir = f"downloads/{file_name}"
 
     torrent_data = {
         "file_path": file_path,
