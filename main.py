@@ -10,7 +10,7 @@ from torrentp import TorrentDownloader
 dotenv.load_dotenv()
 filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBUserWarning)
 
-ACCEPT_TORRENT, SELECT_AUDIO, SAMPLE, UPLOAD, REMOVE_DOWNLOADS = range(5)
+FLOW = range(1)
 
 torrent = "torrent"
 downloads = "downloads"
@@ -22,6 +22,9 @@ upload_chat_id = os.getenv("UPLOAD_CHAT_ID")
 available_user_ids = os.getenv("AVAILABLE_USER_IDS")
 
 video_exts = (".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v")
+
+downloader: TorrentDownloader = None
+download_cancelled = False
 
 async def start(update, _):
     message = update.message
@@ -41,7 +44,23 @@ async def unknown(update, _):
 
 
 async def cancel(update, _) -> int:
-    await update.message.reply_text("Cancelled", reply_markup=ReplyKeyboardRemove())
+    global downloader, download_cancelled
+    download_cancelled = True
+    if downloader:
+        downloader.stop_download()
+        downloader = None
+        keyboard = InlineKeyboardMarkup(
+            [
+                [
+                    InlineKeyboardButton("Yes, proceed", callback_data="remove:yes"),
+                    InlineKeyboardButton("No, cancel", callback_data="remove:no"),
+                ]
+            ]
+        )
+        await update.message.reply_text("Do you want to remove the downloaded files?", reply_markup=keyboard)
+        return FLOW
+
+    await update.message.reply_text("Cancelled.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
 
 
@@ -141,9 +160,10 @@ async def select_torrent(update, context) -> int:
     context.user_data[torrent] = torrent_data
 
     await message.reply_text(info_text, reply_markup=keyboard)
-    return ACCEPT_TORRENT
+    return FLOW
 
 async def accept_torrent(update, context) -> int:
+    global downloader, download_cancelled
     query = update.callback_query
     await query.answer()
     decision = (query.data or "").split(":")[-1]
@@ -152,7 +172,7 @@ async def accept_torrent(update, context) -> int:
         await query.edit_message_text("Cancelled.")
         return ConversationHandler.END
 
-    await query.edit_message_text("Accepted. Downloading torrent file...")
+    await query.edit_message_text("Accepted. Downloading torrent file...\nType /cancel to stop downloading.")
 
     torrent_data = context.user_data.get(torrent, {})
     file_path = torrent_data.get("file_path")
@@ -160,102 +180,115 @@ async def accept_torrent(update, context) -> int:
     os.makedirs(downloads_dir, exist_ok=True)
 
     downloader = TorrentDownloader(f"./{file_path}", downloads_dir)
-    await downloader.start_download()
+    download_cancelled = False
 
-    await query.edit_message_text("Torrent downloaded")
+    chat_id = query.message.chat_id
+    async def _after_download() -> int:
+        nonlocal downloads_dir
+        global downloader
+        if download_cancelled:
+            await query.message.delete()
+            return ConversationHandler.END
 
-    listdir = [f for f in os.listdir(downloads_dir) if os.path.isdir(f"{downloads_dir}/{f}")]
-    if len(listdir) == 0:
-        directory = downloads_dir
-        files = video_files(downloads_dir)
-        name = files[0] if files else ""
-        sample_name = name
-        first_file = f"{downloads_dir}/{sample_name}"
-    elif len(listdir) == 1:
-        first_dir = listdir[0]
-        directory = f"{downloads_dir}/{first_dir}"
-        files = video_files(directory)
-        name = first_dir
-        sample_name = files[0] if files else ""
-        first_file = f"{directory}/{sample_name}"
-    else:
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text="Error: multiple directories in downloads folder",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        return ConversationHandler.END
+        await query.edit_message_text("Torrent downloaded")
 
-    if len(files) == 0:
-        await context.bot.send_message(
-            chat_id=query.message.chat_id,
-            text="Error: no video files in downloads folder",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-        return ConversationHandler.END
+        listdir = [f for f in os.listdir(downloads_dir) if os.path.isdir(f"{downloads_dir}/{f}")]
+        if len(listdir) == 0:
+            directory = downloads_dir
+            files = video_files(downloads_dir)
+            name = files[0] if files else ""
+            sample_name = name
+            first_file = f"{downloads_dir}/{sample_name}"
+        elif len(listdir) == 1:
+            first_dir = listdir[0]
+            directory = f"{downloads_dir}/{first_dir}"
+            files = video_files(directory)
+            name = first_dir
+            sample_name = files[0] if files else ""
+            first_file = f"{directory}/{sample_name}"
+        else:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Error: multiple directories in downloads folder",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return ConversationHandler.END
 
-    context.user_data["name"] = name
-    context.user_data["sample_name"] = sample_name
-    context.user_data["first_file"] = first_file
-    context.user_data["directory"] = directory
+        if len(files) == 0:
+            await context.bot.send_message(
+                chat_id=chat_id,
+                text="Error: no video files in downloads folder",
+                reply_markup=ReplyKeyboardRemove(),
+            )
+            return ConversationHandler.END
 
-    file_title = ""
-    try:
-        probe_info = ffmpeg.probe(first_file)
-        fmt = probe_info.get("format") or {}
-        file_title = fmt.get("tags", {}).get("title") or ""
-        streams = [s for s in (probe_info.get("streams") or []) if s.get("codec_type") == "audio"]
+        context.user_data["name"] = name
+        context.user_data["sample_name"] = sample_name
+        context.user_data["first_file"] = first_file
+        context.user_data["directory"] = directory
 
-        built_tracks = []
-        for i, s in enumerate(streams):
-            tags = s.get("tags") or {}
-            lang = (tags.get("language") or "").lower()
-            title = tags.get("title")
-            codec = s.get("codec_long_name") or s.get("codec_name")
-            channels = s.get("channels")
-            layout = s.get("channel_layout")
+        file_title = ""
+        try:
+            probe_info = ffmpeg.probe(first_file)
+            fmt = probe_info.get("format") or {}
+            file_title = fmt.get("tags", {}).get("title") or ""
+            streams = [s for s in (probe_info.get("streams") or []) if s.get("codec_type") == "audio"]
 
-            parts = []
-            core = []
-            if title: parts.append(title)
-            if lang: core.append(lang)
-            if codec: core.append(codec)
-            if channels: core.append(f"{channels}ch")
-            if layout: core.append(layout)
-            label = (f"{" - ".join(parts)}: " if parts else "") + f"Track {i + 1} ({", ".join(core)})"
+            built_tracks = []
+            for i, s in enumerate(streams):
+                tags = s.get("tags") or {}
+                lang = (tags.get("language") or "").lower()
+                title = tags.get("title")
+                codec = s.get("codec_long_name") or s.get("codec_name")
+                channels = s.get("channels")
+                layout = s.get("channel_layout")
 
-            built_tracks.append({"index": i, "label": label})
+                parts = []
+                core = []
+                if title: parts.append(title)
+                if lang: core.append(lang)
+                if codec: core.append(codec)
+                if channels: core.append(f"{channels}ch")
+                if layout: core.append(layout)
+                label = (f"{" - ".join(parts)}: " if parts else "") + f"Track {i + 1} ({", ".join(core)})"
 
-        audio_tracks = built_tracks
-    except:
-        audio_tracks = []
+                built_tracks.append({"index": i, "label": label})
 
-    context.user_data["audio_tracks"] = audio_tracks
+            audio_tracks = built_tracks
+        except:
+            audio_tracks = []
 
-    if audio_tracks and len(audio_tracks) > 1:
+        context.user_data["audio_tracks"] = audio_tracks
+
+        if audio_tracks and len(audio_tracks) > 1:
+            keyboard = InlineKeyboardMarkup(
+                [
+                    [InlineKeyboardButton(a["label"], callback_data=f"audio:{a["index"]}")]
+                    for a in audio_tracks
+                ]
+            )
+            await query.edit_message_text(
+                f"{sample_name}\n{file_title}\nSelect an audio track:",
+                reply_markup=keyboard,
+            )
+            return FLOW
+
         keyboard = InlineKeyboardMarkup(
             [
-                [InlineKeyboardButton(a["label"], callback_data=f"audio:{a["index"]}")]
-                for a in audio_tracks
+                [
+                    InlineKeyboardButton("Yes, continue", callback_data="sample:yes"),
+                    InlineKeyboardButton("No, cancel", callback_data="sample:no"),
+                ]
             ]
         )
-        await query.edit_message_text(
-            f"{sample_name}\n{file_title}\nSelect an audio track:",
-            reply_markup=keyboard,
-        )
-        return SELECT_AUDIO
+        await query.edit_message_text("Do you want to create a short sample (about 1 minute)?", reply_markup=keyboard)
+        downloader = None
+        return FLOW
 
-    keyboard = InlineKeyboardMarkup(
-        [
-            [
-                InlineKeyboardButton("Yes, continue", callback_data="sample:yes"),
-                InlineKeyboardButton("No, cancel", callback_data="sample:no"),
-            ]
-        ]
-    )
-    await query.edit_message_text("Do you want to create a short sample (about 1 minute)?", reply_markup=keyboard)
-    return SAMPLE
+    download_task = asyncio.create_task(downloader.start_download())
+    download_task.add_done_callback(lambda _: context.application.create_task(_after_download()))
 
+    return FLOW
 
 async def select_audio(update, context) -> int:
     query = update.callback_query
@@ -277,7 +310,7 @@ async def select_audio(update, context) -> int:
         ]
     )
     await query.edit_message_text("Do you want to create a short sample (about 1 minute)?", reply_markup=keyboard)
-    return SAMPLE
+    return FLOW
 
 
 async def sample(update, context) -> int:
@@ -339,7 +372,7 @@ async def sample(update, context) -> int:
     )
     shutil.rmtree(sample_dir, ignore_errors=True)
 
-    return UPLOAD
+    return FLOW
 
 async def upload(update, context) -> int:
     query = update.callback_query
@@ -425,7 +458,7 @@ async def upload(update, context) -> int:
         text="Do you want to remove the downloaded files?",
         reply_markup=keyboard,
     )
-    return REMOVE_DOWNLOADS
+    return FLOW
 
 
 async def remove_downloads(update, context) -> int:
@@ -495,15 +528,18 @@ def main():
     )
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help))
+    application.add_handler(CommandHandler("cancel", cancel))
 
     application.add_handler(ConversationHandler(
         entry_points=[MessageHandler(filters.ATTACHMENT, select_torrent)],
         states={
-            ACCEPT_TORRENT: [CallbackQueryHandler(accept_torrent)],
-            SELECT_AUDIO: [CallbackQueryHandler(select_audio)],
-            SAMPLE: [CallbackQueryHandler(sample)],
-            UPLOAD: [CallbackQueryHandler(upload)],
-            REMOVE_DOWNLOADS: [CallbackQueryHandler(remove_downloads)],
+            FLOW: [
+                CallbackQueryHandler(accept_torrent, pattern="^accept:"),
+                CallbackQueryHandler(select_audio, pattern="^audio:"),
+                CallbackQueryHandler(sample, pattern="^sample:"),
+                CallbackQueryHandler(upload, pattern="^upload:"),
+                CallbackQueryHandler(remove_downloads, pattern="^remove:"),
+            ],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     ))
