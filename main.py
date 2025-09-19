@@ -43,22 +43,13 @@ async def unknown(update, _):
     await update.message.reply_text("Unknown command. Please type /help for available commands")
 
 
-async def cancel(update, _) -> int:
+async def cancel(update, context) -> int:
     global downloader, download_cancelled
     download_cancelled = True
     if downloader:
         downloader.stop_download()
         downloader = None
-        keyboard = InlineKeyboardMarkup(
-            [
-                [
-                    InlineKeyboardButton("Yes, proceed", callback_data="remove:yes"),
-                    InlineKeyboardButton("No, cancel", callback_data="remove:no"),
-                ]
-            ]
-        )
-        await update.message.reply_text("Do you want to remove the downloaded files?", reply_markup=keyboard)
-        return FLOW
+        return await ask_remove_downloads(update, context)
 
     await update.message.reply_text("Cancelled.", reply_markup=ReplyKeyboardRemove())
     return ConversationHandler.END
@@ -319,10 +310,10 @@ async def sample(update, context) -> int:
     decision = (query.data or "").split(":")[-1]
 
     if decision == "no":
-        await query.edit_message_text("Processing cancelled.")
-        return ConversationHandler.END
+        await query.edit_message_text("Sample processing cancelled.")
+        return await ask_remove_downloads(update, context)
 
-    await query.edit_message_text("Great! Continuing processing...")
+    await query.edit_message_text("Great! Continuing sample processing...")
 
     user_data = context.user_data
     sample_name = user_data.get("sample_name")
@@ -401,7 +392,7 @@ async def upload(update, context) -> int:
             text="Upload cancelled.",
             reply_markup=ReplyKeyboardRemove(),
         )
-        return ConversationHandler.END
+        return await ask_remove_downloads(update, context)
 
     message = await context.bot.send_message(
         chat_id=query.message.chat_id,
@@ -445,6 +436,10 @@ async def upload(update, context) -> int:
     if upload_chat_id:
         await context.bot.send_message(chat_id=query.message.chat_id, text=f"Video uploaded to {upload_chat_id}")
 
+    return await ask_remove_downloads(update, context)
+
+async def ask_remove_downloads(update, context) -> int:
+    text = "Do you want to remove the downloaded files?"
     keyboard = InlineKeyboardMarkup(
         [
             [
@@ -453,11 +448,8 @@ async def upload(update, context) -> int:
             ]
         ]
     )
-    await context.bot.send_message(
-        chat_id=query.message.chat_id,
-        text="Do you want to remove the downloaded files?",
-        reply_markup=keyboard,
-    )
+    try: await update.message.reply_text(text, reply_markup=keyboard)
+    except: await context.bot.send_message(update.callback_query.message.chat_id, text, reply_markup=keyboard)
     return FLOW
 
 
