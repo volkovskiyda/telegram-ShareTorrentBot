@@ -21,6 +21,8 @@ timeout = os.getenv("READ_TIMEOUT") or 30
 upload_chat_id = os.getenv("UPLOAD_CHAT_ID")
 available_user_ids = os.getenv("AVAILABLE_USER_IDS")
 
+video_exts = (".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v")
+
 async def start(update, _):
     message = update.message
     username = message.from_user["username"]
@@ -91,17 +93,12 @@ async def select_torrent(update, context) -> int:
         files = ti.files()
         total_size = 0
         listed_files = []
-        video_exts = {".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v"}
-        video_files = []
 
         for idx in range(files.num_files()):
             fpath = files.file_path(idx)
             fsize = files.file_size(idx)
             total_size += fsize
             listed_files.append({"path": fpath, "size": fsize})
-            _, ext = os.path.splitext(fpath.lower())
-            if ext in video_exts:
-                video_files.append(fpath)
 
         torrent_data["file_count"] = files.num_files()
         torrent_data["total_size"] = total_size
@@ -170,14 +167,14 @@ async def accept_torrent(update, context) -> int:
     listdir = [f for f in os.listdir(downloads_dir) if os.path.isdir(f"{downloads_dir}/{f}")]
     if len(listdir) == 0:
         directory = downloads_dir
-        files = os.listdir(downloads_dir)
+        files = video_files(downloads_dir)
         name = files[0] if files else ""
         sample_name = name
         first_file = f"{downloads_dir}/{sample_name}"
     elif len(listdir) == 1:
         first_dir = listdir[0]
         directory = f"{downloads_dir}/{first_dir}"
-        files = os.listdir(directory)
+        files = video_files(directory)
         name = first_dir
         sample_name = files[0] if files else ""
         first_file = f"{directory}/{sample_name}"
@@ -192,7 +189,7 @@ async def accept_torrent(update, context) -> int:
     if len(files) == 0:
         await context.bot.send_message(
             chat_id=query.message.chat_id,
-            text="Error: no files in downloads folder",
+            text="Error: no video files in downloads folder",
             reply_markup=ReplyKeyboardRemove(),
         )
         return ConversationHandler.END
@@ -373,7 +370,7 @@ async def upload(update, context) -> int:
     upload_dir = f"upload/{directory}"
     os.makedirs(upload_dir, exist_ok=True)
 
-    for f in os.listdir(directory):
+    for f in video_files(directory):
         pipeline = ffmpeg_pipeline(os.path.join(directory, f), os.path.join(upload_dir, f"{f}.mp4"), selected_audio_index, False)
         await asyncio.to_thread(pipeline.run, capture_stdout=True, capture_stderr=True)
 
@@ -439,6 +436,9 @@ async def retry(
             if i == retries - 1:
                 if error_target: await error_target(*error_target_args)
                 raise e
+
+def video_files(path: str):
+    return [f for f in os.listdir(path) if f.lower().endswith(video_exts)]
 
 def main():
     application = (
