@@ -10,7 +10,7 @@ from torrentp import TorrentDownloader
 dotenv.load_dotenv()
 filterwarnings(action="ignore", message=r".*CallbackQueryHandler", category=PTBUserWarning)
 
-ACCEPT_TORRENT, SELECT_AUDIO, SAMPLE, UPLOAD = range(4)
+ACCEPT_TORRENT, SELECT_AUDIO, SAMPLE, UPLOAD, REMOVE_DOWNLOADS = range(5)
 
 torrent = "torrent"
 downloads = "downloads"
@@ -345,7 +345,19 @@ async def upload(update, context) -> int:
     query = update.callback_query
     await query.answer()
 
-    try: await query.edit_message_reply_markup(reply_markup=None)
+    user_data = context.user_data
+    name = user_data.get("name")
+    sample_name = user_data.get("sample_name")
+    directory = user_data.get("directory")
+    selected_audio_index = user_data.get("selected_audio_index")
+
+    message = query.message
+    caption_text = f"Sample of {sample_name}"
+    try:
+        if message.caption:
+            await message.edit_caption(caption=caption_text, reply_markup=None)
+        else:
+            await message.edit_text(text=caption_text, reply_markup=None)
     except: pass
 
     decision = (query.data or "").split(":")[-1]
@@ -363,11 +375,6 @@ async def upload(update, context) -> int:
         text="Great! Converting original video to mp4...",
         reply_markup=ReplyKeyboardRemove(),
     )
-
-    user_data = context.user_data
-    name = user_data.get("name")
-    directory = user_data.get("directory")
-    selected_audio_index = user_data.get("selected_audio_index")
 
     upload_dir = f"upload/{directory}"
     os.makedirs(upload_dir, exist_ok=True)
@@ -401,6 +408,39 @@ async def upload(update, context) -> int:
         )
     shutil.rmtree(upload_dir, ignore_errors=True)
     print(f"Uploaded {name}, upload folder removed: {upload_dir}")
+
+    keyboard = InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("Yes, proceed", callback_data="remove:yes"),
+                InlineKeyboardButton("No, cancel", callback_data="remove:no"),
+            ]
+        ]
+    )
+    await context.bot.send_message(
+        chat_id=query.message.chat_id,
+        text="Do you want to remove the downloaded files?",
+        reply_markup=keyboard,
+    )
+    return REMOVE_DOWNLOADS
+
+
+async def remove_downloads(update, context) -> int:
+    query = update.callback_query
+    await query.answer()
+    decision = (query.data or "").split(":")[-1]
+
+    if decision == "no":
+        try: await query.message.delete()
+        except: pass
+        return ConversationHandler.END
+
+    downloads_dir = context.user_data.get(torrent, {}).get("downloads_dir")
+
+    shutil.rmtree(downloads_dir, ignore_errors=True)
+    text = f"Download folder removed: {downloads_dir}"
+    print(text)
+    await query.edit_message_text(text)
     return ConversationHandler.END
 
 async def send_video(bot: Bot, chat_id: str, file: str, video: str):
@@ -460,6 +500,7 @@ def main():
             SELECT_AUDIO: [CallbackQueryHandler(select_audio)],
             SAMPLE: [CallbackQueryHandler(sample)],
             UPLOAD: [CallbackQueryHandler(upload)],
+            REMOVE_DOWNLOADS: [CallbackQueryHandler(remove_downloads)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     ))
