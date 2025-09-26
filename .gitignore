@@ -3,6 +3,7 @@
 
 .env
 
+config/
 downloads/
 home/
 sample/

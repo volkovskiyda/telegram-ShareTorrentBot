@@ -10,7 +10,7 @@ services:
     command:
       - --local
     volumes:
-      - ./home/:/home
+      - ./config/home/:/home
     ports:
       - "8081:8081"
 
@@ -23,10 +23,15 @@ services:
     image: ghcr.io/volkovskiyda/sharetorrentbot
     pull_policy: always
     volumes:
-      - ./home/:/project/home
+      - ./config/download/:/download
+      - ./config/home/:/home
+      - ./config/sample/:/sample
+      - ./config/torrent/:/torrent
+      - ./config/upload/:/upload
     environment:
-      BASE_URL: http://api:8081
+      BASE_URL: http://localhost:8081
       READ_TIMEOUT: 600
+      CONFIG_FOLDER: ./config
       BOT_TOKEN: $BOT_TOKEN
       UPLOAD_CHAT_ID: $UPLOAD_CHAT_ID
       AVAILABLE_USER_IDS: $AVAILABLE_USER_IDS

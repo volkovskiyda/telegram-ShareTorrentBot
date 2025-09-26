@@ -15,6 +15,7 @@ base_url = os.getenv("BASE_URL") or "http://localhost:8081"
 timeout = os.getenv("READ_TIMEOUT") or 30
 upload_chat_id = os.getenv("UPLOAD_CHAT_ID")
 available_user_ids = os.getenv("AVAILABLE_USER_IDS")
+config_folder = os.getenv('CONFIG_FOLDER') or '/'
 
 torrent = "torrent"
 video_exts = (".mp4", ".mkv", ".mov", ".avi", ".webm", ".m4v")
@@ -67,30 +68,30 @@ async def select_torrent(update, context) -> int:
         await message.reply_text("Please attach a valid .torrent file.")
         return ConversationHandler.END
 
-    torrents = "torrents"
+    torrent_dir = f"{config_folder}/torrent"
 
-    os.makedirs(torrents, exist_ok=True)
-    torrent_path = os.path.join(torrents, file_name)
+    os.makedirs(torrent_dir, exist_ok=True)
+    torrent_path = os.path.join(torrent_dir, file_name)
     file = await context.bot.get_file(document.file_id)
 
     try:
         file_path = await file.download_to_drive(torrent_path)
         print(f"download_to_drive: {file_path}")
     except InvalidToken:
-        file_path = "/home/" + file.file_path.split("//home/")[-1]
+        file_path = f"{config_folder}/home/" + file.file_path.split("//home/")[-1]
         torrent_path = file_path
     except Exception as e:
         await message.reply_text(f"Failed to download torrent file: {e}")
         return ConversationHandler.END
 
     file_name = document.file_name
-    downloads_dir = f"downloads/{file_name}"
+    download_dir = f"{config_folder}/download/{file_name}"
 
     torrent_data = {
         "file_path": file_path,
         "path": torrent_path,
         "torrent_name": file_name,
-        "downloads_dir": downloads_dir,
+        "download_dir": download_dir,
         "file_count": None,
         "total_size": None,
         "files": [],
@@ -165,15 +166,15 @@ async def accept_torrent(update, context) -> int:
 
     torrent_data = context.user_data.get(torrent, {})
     file_path = torrent_data.get("file_path")
-    downloads_dir = torrent_data.get("downloads_dir")
-    os.makedirs(downloads_dir, exist_ok=True)
+    download_dir = torrent_data.get("download_dir")
+    os.makedirs(download_dir, exist_ok=True)
 
-    downloader = TorrentDownloader(f"./{file_path}", downloads_dir)
+    downloader = TorrentDownloader(file_path, download_dir)
     download_cancelled = False
 
     chat_id = query.message.chat_id
     async def _after_download() -> int:
-        nonlocal downloads_dir
+        nonlocal download_dir
         global downloader
         if download_cancelled:
             await query.message.delete()
@@ -181,16 +182,16 @@ async def accept_torrent(update, context) -> int:
 
         await query.edit_message_text("Torrent downloaded")
 
-        listdir = [f for f in os.listdir(downloads_dir) if os.path.isdir(f"{downloads_dir}/{f}")]
+        listdir = [f for f in os.listdir(download_dir) if os.path.isdir(f"{download_dir}/{f}")]
         if len(listdir) == 0:
-            directory = downloads_dir
-            files = video_files(downloads_dir)
+            directory = download_dir
+            files = video_files(download_dir)
             name = files[0] if files else ""
             sample_name = name
-            first_file = f"{downloads_dir}/{sample_name}"
+            first_file = f"{download_dir}/{sample_name}"
         elif len(listdir) == 1:
             first_dir = listdir[0]
-            directory = f"{downloads_dir}/{first_dir}"
+            directory = f"{download_dir}/{first_dir}"
             files = video_files(directory)
             name = first_dir
             sample_name = files[0] if files else ""
@@ -318,7 +319,7 @@ async def sample(update, context) -> int:
     first_file = user_data.get("first_file")
     selected_audio_index = user_data.get("selected_audio_index")
 
-    sample_dir = "sample"
+    sample_dir = f"{config_folder}/sample"
     os.makedirs(sample_dir, exist_ok=True)
     output_path = os.path.join(sample_dir, f"{sample_name}.mp4")
 
@@ -398,7 +399,7 @@ async def upload(update, context) -> int:
         reply_markup=ReplyKeyboardRemove(),
     )
 
-    upload_dir = f"upload/{directory}"
+    upload_dir = f"{config_folder}/upload/{directory}"
     os.makedirs(upload_dir, exist_ok=True)
 
     for f in video_files(directory):
@@ -461,10 +462,10 @@ async def remove_downloads(update, context) -> int:
         except: pass
         return ConversationHandler.END
 
-    downloads_dir = context.user_data.get(torrent, {}).get("downloads_dir")
+    download_dir = context.user_data.get(torrent, {}).get("download_dir")
 
-    shutil.rmtree(downloads_dir, ignore_errors=True)
-    text = f"Download folder removed: {downloads_dir}"
+    shutil.rmtree(download_dir, ignore_errors=True)
+    text = f"Download folder removed: {download_dir}"
     print(text)
     await query.edit_message_text(text)
     return ConversationHandler.END
