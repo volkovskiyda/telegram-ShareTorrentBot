@@ -76,6 +76,7 @@ async def select_torrent(update, context) -> int:
 
     try:
         file_path = await file.download_to_drive(torrent_path)
+        file_path = file_path.as_posix()
         print(f"download_to_drive: {file_path}")
     except InvalidToken:
         file_path = f"{config_folder}/home/" + file.file_path.split("//home/")[-1]
