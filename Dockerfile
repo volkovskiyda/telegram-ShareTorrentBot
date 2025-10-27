@@ -1,4 +1,4 @@
-FROM python
+FROM python:3.13
 
 LABEL maintainer="volkovskiyda@gmail.com"
 LABEL description="Telegram bot for downloading and sharing video from torrent"
